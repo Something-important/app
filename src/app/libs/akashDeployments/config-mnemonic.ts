@@ -1,0 +1,2 @@
+// config-mnemonic.js
+export const mnemonic = "unusual daring umbrella wealth castle embrace staff end expose because core move hamster old boost sense tonight million concert pond once assault brief viable";
