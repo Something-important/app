@@ -14,9 +14,7 @@ import { mnemonic } from './config-mnemonic';
 import { sdlContent } from './config-sdl';
 import { rpcEndpoints} from './config-rpc';
 import { preferredProviders } from './providers';
-import '../../../crypto-polyfill.js';
-import _ from 'lodash';
-import '../../../../crypto-wrapper.js';
+
 type Deployment = {
   id: {
     owner: string;
