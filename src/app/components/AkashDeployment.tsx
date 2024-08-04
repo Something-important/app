@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 
 interface Service {
   name: string;
@@ -18,12 +18,25 @@ interface Deployment {
   dseq: string;
   owner: string;
   state: string;
+  version: string;
+  createdAt: string;
   provider: string;
   providerHostUri: string;
   publicUrl: string | null;
   services: Service[];
   resources: Resources;
   price: string;
+  escrowAccount: {
+    id: string;
+    owner: string;
+    state: number;
+    balance: string;
+  } | null;
+  escrowBalance: string;
+  logs: string;
+  leaseState: number;
+  leaseCreatedAt: string;
+  leaseClosedOn: string;
 }
 
 interface TakeDownResult {
@@ -33,49 +46,14 @@ interface TakeDownResult {
   transactionHash?: string;
 }
 
-const Popover = ({ isOpen, onClose, children }) => {
-  const popoverRef = useRef(null);
-
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (popoverRef.current && !popoverRef.current.contains(event.target)) {
-        onClose();
-      }
-    };
-
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [isOpen, onClose]);
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
-      <div ref={popoverRef} className="bg-gray-800 p-6 rounded-lg shadow-xl max-w-md w-full">
-        {children}
-        <button
-          onClick={onClose}
-          className="mt-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
-        >
-          Close
-        </button>
-      </div>
-    </div>
-  );
-};
-
 export default function AkashDeployments() {
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [takingDownDseqs, setTakingDownDseqs] = useState<string[]>([]);
   const [selectedDseqs, setSelectedDseqs] = useState<string[]>([]);
-  const [openPopover, setOpenPopover] = useState<string | null>(null);
+  const [selectedDeployment, setSelectedDeployment] = useState<Deployment | null>(null);
+  const [activeTab, setActiveTab] = useState('General');
 
   useEffect(() => {
     fetchDeployments();
@@ -89,19 +67,16 @@ export default function AkashDeployments() {
         throw new Error(errorData.error || 'Failed to fetch deployments');
       }
       const data = await response.json();
-      // Ensure the data matches the Deployment interface
-      const formattedDeployments: Deployment[] = data.deployments.map(d => ({
-        dseq: d.dseq,
-        owner: d.owner,
-        state: d.state,
-        provider: d.provider,
-        providerHostUri: d.providerHostUri,
-        publicUrl: d.publicUrl,
-        services: d.services,
-        resources: d.resources,
-        price: d.price
-      }));
-      setDeployments(formattedDeployments);
+      console.log('Fetched data:', data); // Debug log
+      
+      if (Array.isArray(data)) {
+        setDeployments(data);
+      } else if (data && typeof data === 'object' && Array.isArray(data.deployments)) {
+        setDeployments(data.deployments);
+      } else {
+        console.error('Unexpected data format:', data);
+        throw new Error('Unexpected data format received from server');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unknown error occurred');
       console.error("Error fetching deployments:", err);
@@ -164,12 +139,15 @@ export default function AkashDeployments() {
     setSelectedDseqs([]);
   };
 
-  const handleOpenPopover = (dseq: string) => {
-    setOpenPopover(dseq);
+  const formatDate = (timestamp: string) => {
+    return new Date(parseInt(timestamp) * 1000).toLocaleString();
   };
 
-  const handleClosePopover = () => {
-    setOpenPopover(null);
+  const formatBytes = (bytes: string) => {
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    if (bytes === '0') return '0 Byte';
+    const i = parseInt(Math.floor(Math.log(parseInt(bytes)) / Math.log(1024)).toString());
+    return Math.round(parseInt(bytes) / Math.pow(1024, i)) + ' ' + sizes[i];
   };
 
   if (loading) return <div className="text-center py-8">Loading deployments...</div>;
@@ -180,8 +158,13 @@ export default function AkashDeployments() {
     </div>
   );
 
+  if (!Array.isArray(deployments)) {
+    console.error('deployments is not an array:', deployments);
+    return <div className="text-center py-8">Error: Deployment data is in an unexpected format.</div>;
+  }
+
   return (
-    <div>
+    <div className="container mx-auto px-4">
       <h2 className="text-3xl font-bold mb-6">Your Deployments</h2>
       {deployments.length === 0 ? (
         <p className="text-xl text-gray-300">No deployments found.</p>
@@ -237,6 +220,12 @@ export default function AkashDeployments() {
                     {deployment.state}
                   </span>
                 </p>
+                <p className="text-gray-300 mb-2">
+                  <span className="font-medium text-gray-400">Created:</span> {formatDate(deployment.createdAt)}
+                </p>
+                <p className="text-gray-300 mb-2">
+                  <span className="font-medium text-gray-400">Price:</span> {deployment.price}
+                </p>
                 {deployment.publicUrl && (
                   <p className="text-gray-300 mb-4">
                     <span className="font-medium text-gray-400">Public URL:</span>{' '}
@@ -246,10 +235,10 @@ export default function AkashDeployments() {
                   </p>
                 )}
                 <button
-                  onClick={() => handleOpenPopover(deployment.dseq)}
-                  className="text-blue-400 hover:text-blue-300 underline"
+                  onClick={() => setSelectedDeployment(deployment)}
+                  className="text-blue-400 hover:text-blue-300 underline mr-4"
                 >
-                  More Info
+                  View Details
                 </button>
                 {takingDownDseqs.includes(deployment.dseq) ? (
                   <div className="w-full mt-4 bg-yellow-600 text-white px-4 py-2 rounded text-center">
@@ -263,31 +252,90 @@ export default function AkashDeployments() {
                     Destroy Deployment
                   </button>
                 )}
-                <Popover
-                  isOpen={openPopover === deployment.dseq}
-                  onClose={handleClosePopover}
-                >
-                  <h4 className="text-lg font-semibold mb-2">Deployment Details</h4>
-                  <p><strong>Owner:</strong> {deployment.owner}</p>
-                  <p><strong>Provider Host URI:</strong> {deployment.providerHostUri}</p>
-                  <p><strong>Resources:</strong></p>
-                  <ul className="list-disc list-inside ml-4">
-                    <li>CPU: {deployment.resources.cpu}</li>
-                    <li>Memory: {deployment.resources.memory}</li>
-                    <li>Storage: {deployment.resources.storage}</li>
-                  </ul>
-                  <p><strong>Price:</strong> {deployment.price}</p>
-                  <p><strong>Services:</strong></p>
-                  <ul className="list-disc list-inside ml-4">
-                    {deployment.services.map((service, index) => (
-                      <li key={index}>
-                        {service.name} ({service.available}/{service.total})
-                      </li>
-                    ))}
-                  </ul>
-                </Popover>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+      {selectedDeployment && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
+          <div className="bg-gray-800 p-6 rounded-lg shadow-xl max-w-3xl w-full">
+            <h3 className="text-2xl font-semibold text-blue-400 mb-4">Deployment Details: {selectedDeployment.dseq}</h3>
+            <div className="flex mb-4">
+              {['General', 'Resources', 'Services', 'Escrow', 'Logs'].map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-4 py-2 mr-2 rounded-t-lg ${
+                    activeTab === tab
+                      ? 'bg-gray-700 text-white'
+                      : 'bg-gray-600 text-gray-300 hover:bg-gray-700 hover:text-white'
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+            <div className="bg-gray-700 rounded-xl p-3">
+              {activeTab === 'General' && (
+                <div>
+                  <p><strong>Owner:</strong> {selectedDeployment.owner}</p>
+                  <p><strong>Version:</strong> {selectedDeployment.version}</p>
+                  <p><strong>Provider Host URI:</strong> {selectedDeployment.providerHostUri}</p>
+                  <p><strong>Lease State:</strong> {selectedDeployment.leaseState}</p>
+                  <p><strong>Lease Created:</strong> {formatDate(selectedDeployment.leaseCreatedAt)}</p>
+                  <p><strong>Lease Closed On:</strong> {selectedDeployment.leaseClosedOn !== '0' ? formatDate(selectedDeployment.leaseClosedOn) : 'N/A'}</p>
+                </div>
+              )}
+              {activeTab === 'Resources' && (
+                <div>
+                  <p><strong>CPU:</strong> {selectedDeployment.resources.cpu} units</p>
+                  <p><strong>Memory:</strong> {formatBytes(selectedDeployment.resources.memory)}</p>
+                  <p><strong>Storage:</strong> {formatBytes(selectedDeployment.resources.storage)}</p>
+                </div>
+              )}
+              {activeTab === 'Services' && (
+                <ul className="list-disc list-inside">
+                  {selectedDeployment.services.map((service, index) => (
+                    <li key={index}>
+                      {service.name} ({service.available}/{service.total})
+                      <ul className="list-disc list-inside ml-4">
+                        {service.uris.map((uri, uriIndex) => (
+                          <li key={uriIndex}>{uri}</li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {activeTab === 'Escrow' && (
+                <div>
+                  <p><strong>Escrow Balance:</strong> {selectedDeployment.escrowBalance}</p>
+                  {selectedDeployment.escrowAccount && (
+                    <div>
+                      <p><strong>Escrow Account:</strong></p>
+                      <ul className="list-disc list-inside ml-4">
+                        <li>ID: {selectedDeployment.escrowAccount.id}</li>
+                        <li>Owner: {selectedDeployment.escrowAccount.owner}</li>
+                        <li>State: {selectedDeployment.escrowAccount.state}</li>
+                        <li>Balance: {selectedDeployment.escrowAccount.balance}</li>
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+              {activeTab === 'Logs' && (
+                <pre className="whitespace-pre-wrap overflow-auto max-h-96">
+                  {selectedDeployment.logs || 'No logs available'}
+                </pre>
+              )}
+            </div>
+            <button
+              onClick={() => setSelectedDeployment(null)}
+              className="mt-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
+            >
+              Close
+            </button>
           </div>
         </div>
       )}
